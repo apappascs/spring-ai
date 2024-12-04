@@ -16,6 +16,7 @@
 
 package org.springframework.ai.openai;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
@@ -73,6 +74,7 @@ import org.springframework.ai.openai.api.common.OpenAiApiConstants;
 import org.springframework.ai.openai.metadata.OpenAiUsage;
 import org.springframework.ai.openai.metadata.support.OpenAiResponseHeaderExtractor;
 import org.springframework.ai.retry.RetryUtils;
+import org.springframework.ai.retry.TransientAiException;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.Resource;
 import org.springframework.http.ResponseEntity;
@@ -296,8 +298,14 @@ public class OpenAiChatModel extends AbstractToolCallSupport implements ChatMode
 				throw new IllegalArgumentException("Audio parameters are not supported for streaming requests.");
 			}
 
-			Flux<OpenAiApi.ChatCompletionChunk> completionChunks = this.openAiApi.chatCompletionStream(request,
-					getAdditionalHttpHeaders(prompt));
+			ReactiveRetryTemplate reactiveRetryTemplate = ReactiveRetryTemplate.builder()
+				.maxAttempts(3)
+				.backoff(Duration.ofMillis(500), Duration.ofSeconds(5))
+				.retryOn(TransientAiException.class::isInstance)
+				.build();
+
+			Flux<OpenAiApi.ChatCompletionChunk> completionChunks = reactiveRetryTemplate
+				.executeFlux(() -> this.openAiApi.chatCompletionStream(request, getAdditionalHttpHeaders(prompt)));
 
 			// For chunked responses, only the first chunk contains the choice role.
 			// The rest of the chunks with same ID share the same role.

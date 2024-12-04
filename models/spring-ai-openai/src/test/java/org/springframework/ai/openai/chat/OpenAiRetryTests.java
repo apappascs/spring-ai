@@ -28,6 +28,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
+import reactor.test.StepVerifier;
 
 import org.springframework.ai.audio.transcription.AudioTranscriptionPrompt;
 import org.springframework.ai.audio.transcription.AudioTranscriptionResponse;
@@ -75,6 +76,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.isA;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 /**
  * @author Christian Tzolov
@@ -172,6 +175,25 @@ public class OpenAiRetryTests {
 		assertThat(result.collectList().block().get(0).getResult().getOutput().getContent()).isSameAs("Response");
 		assertThat(this.retryListener.onSuccessRetryCount).isEqualTo(2);
 		assertThat(this.retryListener.onErrorRetryCount).isEqualTo(2);
+	}
+
+	@Test
+	public void openAiChatStreamTransientErrorNew() {
+		var choice = new ChatCompletionChunk.ChunkChoice(ChatCompletionFinishReason.STOP, 0,
+				new ChatCompletionMessage("Response", Role.ASSISTANT), null);
+		ChatCompletionChunk expectedChatCompletion = new ChatCompletionChunk("id", List.of(choice), 666L, "model", null,
+				null, null, null);
+
+		given(this.openAiApi.chatCompletionStream(isA(ChatCompletionRequest.class), any()))
+			.willThrow(new TransientAiException("Transient Error 1"))
+			.willThrow(new TransientAiException("Transient Error 2"))
+			.willReturn(Flux.just(expectedChatCompletion));
+
+		StepVerifier.create(this.chatModel.stream(new Prompt("text")))
+			.expectNextMatches(response -> "Response".equals(response.getResult().getOutput().getContent()))
+			.verifyComplete();
+
+		verify(this.openAiApi, times(3)).chatCompletionStream(isA(ChatCompletionRequest.class), any());
 	}
 
 	@Test
